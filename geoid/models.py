@@ -24,6 +24,10 @@ import matplotlib.pyplot as plt
 GEOID_FILENAME = 'gsigeo2011_ver2_1.asc'
 GEOID_PATH = os.path.join('download', GEOID_FILENAME)
 
+# ジオイドモデルの地理座標系
+DEFAULT_CRC = 'EPSG:6668'
+
+
 class GeoidModel:
     """
     ジオイドモデル「日本のジオイド」データを操作するための管理クラス。
@@ -125,14 +129,14 @@ class GeoidModel:
         メタ情報を表示する。
         """
         print(f'path:        {self.path}')
-        print(f'name:        {self.name}')
-        print(f'description: {self.description}')
-        print(f'mesh no:     {self.mesh_no}')
-        print(f'mesh type:   {self.mesh_type}')
-        print(f'mesh range:  [{self.lower[0]}, {self.lower[1]}] - [{self.upper[0]}, {self.upper[1]}]')
-        print(f'mesh position range: [{self.low[0]}, {self.low[1]}] - [{self.high[0]}, {self.high[1]}] sequence: {self.seq_rule}')
-        print(f'mesh order:          [{self.order[0]}, {self.order[1]}]')
-        print(f'mesh length: x:{len(self.x)}, y:{len(self.y)}, z:{len(self.z)} type:{len(self.t)} uom:{self.uom}')
+        #print(f'name:        {self.name}')
+        #print(f'description: {self.description}')
+        #print(f'mesh no:     {self.mesh_no}')
+        #print(f'mesh type:   {self.mesh_type}')
+        #print(f'mesh range:  [{self.lower[0]}, {self.lower[1]}] - [{self.upper[0]}, {self.upper[1]}]')
+        #print(f'mesh position range: [{self.low[0]}, {self.low[1]}] - [{self.high[0]}, {self.high[1]}] sequence: {self.seq_rule}')
+        #print(f'mesh order:          [{self.order[0]}, {self.order[1]}]')
+        #print(f'mesh length: x:{len(self.x)}, y:{len(self.y)}, z:{len(self.z)} type:{len(self.t)} uom:{self.uom}')
         print(f'path:  {self.path}')
         print(f'glamn: {self.glamn}')
         print(f'glomn: {self.glomn}')
@@ -197,7 +201,7 @@ class GeoidModel:
         ax = fig.add_subplot(projection='3d')
 
         # タイトルの作成
-        ax.set_title('Geoid Japan2011 Ver2.1', size=10)
+        ax.set_title(f'Geoid Japan2011 {self.vern}', size=10)
  
         # 軸ラベルのサイズと色を設定
         ax.set_xlabel('latitude(degrees)',size=10,color='black')
@@ -239,7 +243,7 @@ class GeoidModel:
         ax = fig.add_subplot()
 
         # タイトルの作成
-        ax.set_title('Geoid Japan2011 Ver2.1', size=10)
+        ax.set_title(f'Geoid Japan2011 {self.vern}', size=10)
  
         # 軸ラベルのサイズと色を設定
         ax.set_xlabel('latitude(degrees)',size=10,color='black')
@@ -297,7 +301,7 @@ class GeoidModel:
         if self.debug:
             print(f'saved to {path}')
 
-    def to_geojson(self, path:str=None, crs:str='EPSG:4326'):
+    def to_geojson(self, path:str=None, crs:str=DEFAULT_CRC):
         """
         ジオイドモデルをGeoJson形式で保存する。
 
@@ -306,7 +310,7 @@ class GeoidModel:
         path:str
             GeoJson形式ファイルパス
         crs:str
-            座標系（デフォルト: 'EPSG:4326'）
+            座標系（デフォルト: 'EPSG:6668'）
         """
         if path is None:
             path = os.path.join(
@@ -314,7 +318,7 @@ class GeoidModel:
                 os.path.splitext(os.path.basename(self.path))[0] + '.json')
         self.get_gpd(crs=crs).to_file(driver='GeoJSON', filename=path)
 
-    def to_geoshp(self, path:str=None, crs:str='EPSG:4326'):
+    def to_geoshp(self, path:str=None, crs:str=DEFAULT_CRC):
         """
         ジオイドモデルをShp形式で保存する。
 
@@ -323,7 +327,7 @@ class GeoidModel:
         path:str
             GeoJson形式ファイルパス
         crs:str
-            座標系（デフォルト: 'EPSG:4326'）
+            座標系（デフォルト: 'EPSG:6668'）
         """
         if path is None:
             path = os.path.join(
@@ -600,14 +604,14 @@ class GeoidModel:
 
         return (x, y, z)
 
-    def get_gpd(self, crs:str='EPSG:4326') -> gpd.GeoDataFrame:
+    def get_gpd(self, crs:str=DEFAULT_CRC) -> gpd.GeoDataFrame:
         """
         ジオイドモデルをGeoDataFrame オブジェクトとして取得する。
 
         Parameters
         ----
         crs:str
-            座標系（デフォルト EPSG:4326）
+            座標系(デフォルト EPSG:6668)
         
         Returns
         ----
@@ -680,8 +684,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='show Japan geoid height with 3d scatter')
     parser.add_argument('--path', type=str, default=GEOID_PATH, help='Japan Geoid Height data file(asc) path')
     parser.add_argument('--outdir', type=str, default='output', help='output directory path')
-    parser.add_argument('--debug', type=bool, default=False, help='print debug lines')
+    parser.add_argument('--debug', action='store_true', help='print debug lines')
     args = parser.parse_args()
-    
+    import time
+    elapsed = time.process_time()
     model = GeoidModel(path=args.path, debug=args.debug)
     model.to_all(output_dir=args.outdir)
+    elapsed -= time.process_time()
+    print(f'elapsed time: {abs(elapsed)} sec')

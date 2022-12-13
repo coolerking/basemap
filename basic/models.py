@@ -16,8 +16,12 @@ import geopandas as gpd
 
 import matplotlib.pyplot as plt
 
-
 class BasicModel:
+    """
+    国土地理院 基盤地図情報 基本情報をあらわすクラス。
+    1XMLファイル1インスタンスであらわす。
+    """
+
     def __init__(self, path:str, debug:bool=False) -> None:
         """
         基盤地図情報基本情報XMLファイルを読み込む。
@@ -38,20 +42,25 @@ class BasicModel:
     def get_gpd(self) -> gpd.GeoDataFrame:
         """
         ジオイドモデルをGeoDataFrame オブジェクトとして取得する。
+        座標系はXMLに従う。
 
         Returns
         ----
         gpd.GeoDataFrame
             ジオイドモデル(ジオイド高:'height'属性)
         """
-        #gpd.io.file.fiona.drvsupport.supported_drivers['KML'] = 'rw'
-        return gpd.read_file(self.path) #, driver='KML')
+        gdf = gpd.read_file(self.path)
+        if gdf.crs is None:
+            print('crs None!')
+            raise ValueError(f'crs {gdf.crs} in XML {self.path} is None')
+        return gdf
 
     def show_meta(self):
         """
         メタ情報を表示する。
         """
         print(f'path:    {self.path}')
+        print(f'crs:     {self.gdf.crs}')
         print(f'columns: {self.gdf.columns}')
         print(f'length:  {len(self.gdf)}')
 
@@ -132,7 +141,7 @@ class BasicModel:
         if path is None:
             path = os.path.join(
                 os.path.dirname(self.path),
-                os.path.splitext(os.path.basename(self.path))[0] + '.csv')
+                os.path.splitext(f'{os.path.basename(self.path)[0]}.csv'))
         self.gdf.to_csv(path)
         if self.debug:
             print(f'saved to {path}')
@@ -149,7 +158,7 @@ class BasicModel:
         if path is None:
             path = os.path.join(
                 os.path.dirname(self.path),
-                os.path.splitext(os.path.basename(self.path))[0] + '.json')
+                os.path.splitext(f'{os.path.basename(self.path)[0]}.json'))
         self.gdf.to_file(driver='GeoJSON', filename=path)
         if self.debug:
             print(f'saved to {path}')
@@ -166,7 +175,7 @@ class BasicModel:
         if path is None:
             path = os.path.join(
                 os.path.dirname(self.path),
-                os.path.splitext(os.path.basename(self.path))[0] + '.shp')
+                os.path.splitext(f'{os.path.basename(self.path)[0]}.shp'))
         self.gdf.to_file(driver='ESRI Shapefile', filename=path)
         if self.debug:
             print(f'saved to {path}')
@@ -176,6 +185,7 @@ class Converter:
     指定されたディレクトリ内の複数のXMLファイル(FG-GML-*.xml)を
     CSV/GeoJSON/Shapeに変換するユーティリティクラス。
     """
+    # ターゲットとするファイル名正規表現
     EXPR = 'FG-GML*.xml'
 
     def __init__(self, data_dir:str='', debug:bool=False) -> None:
@@ -225,7 +235,7 @@ class Converter:
             prefix_path = os.path.join(
                 output_dir,
                 os.path.splitext(os.path.basename(path))[0])
-            BasicModel(path, self.debug).get_scatter2d(prefix_path + '_2d.png')
+            BasicModel(path, self.debug).get_scatter2d(f'{prefix_path}_2d.png')
             gc.collect()
 
 
@@ -251,10 +261,10 @@ class Converter:
                 output_dir,
                 os.path.splitext(os.path.basename(path))[0])
             model = BasicModel(path, self.debug)
-            model.save_csv(prefix_path + '.csv')
-            model.save_geojson(prefix_path + '.json')
-            model.save_geoshp(prefix_path + '.shp')
-            model.get_scatter2d(prefix_path + '_2d.png')
+            model.save_csv(f'{prefix_path}.csv')
+            model.save_geojson(f'{prefix_path}.json')
+            model.save_geoshp(f'{prefix_path}.shp')
+            model.get_scatter2d(f'{prefix_path}_2d.png')
             del model
             gc.collect()
 

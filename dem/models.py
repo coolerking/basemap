@@ -7,8 +7,6 @@ import gc
 import os
 import csv
 import glob
-#import pathlib
-#import collections
 import numpy as np
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
@@ -16,6 +14,8 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 from shapely.geometry import Point
 
+# ジオイドモデルの地理座標系
+DEFAULT_CRS = 'EPSG:6668'
 
 class MeshModel:
     """
@@ -29,12 +29,27 @@ class MeshModel:
     """
     NO_DATA = -9999.0
 
-    def __init__(self, path:str=None, debug:bool=False) -> None:
+    def __init__(self, path:str=None, omit_no_data:bool=True, debug:bool=False) -> None:
         """
-        
+        基盤地図情報DEM5M/10M XMLファイルを読み込む。
+
+        Parameters
+        ----
+        path:str=None
+            基盤地図情報DEM5m/10m XMLファイルパス
+        omit_no_data:bool=True
+            真:NO_DATA値を削除する、偽:NO_DATAも含める
+        debug:bool=False
+            デバッグフラグ（メタ情報表示）
         """
         # デバッグフラグ
         self.debug = debug
+
+        # NO_DATAを削除するか
+        self.omit_no_data = omit_no_data
+
+        #if self.debug:
+        print(f'init path={path}, omit_no_data={self.omit_no_data}, debug:{self.debug}')
 
         # GMLファイルを読み込みメタ情報及びデータを
         # インスタンス変数へ格納
@@ -76,6 +91,11 @@ class MeshModel:
         # データ種類
         self.mesh_type = root_element.find('.//type', prefix_map).text
 
+        # 地理座標系
+        self.srs_name = root_element.find(
+            './/gml:boundedBy', prefix_map).find(
+                './/gml:Envelope', prefix_map).get('srsName')
+
         # メッシュ矩形左下頂点位置
         lower_element = root_element.find('.//gml:lowerCorner', prefix_map).text.split()
         #self.lower = [float(lower_element[0]), float(lower_element[1])]
@@ -93,8 +113,8 @@ class MeshModel:
         # データ始点位置、データ終点位置
         if axislavels_element[0] == 'y':
             # 先頭ラベルが 'y' なら座標位置を置換
-            self.low =  [self.low[1],  self.low[0]]
-            self.high = [self.high[1], self.high[0]]
+            self.low =  [int(low_coord[1]),  int(low_coord[0])] # [self.low[1],  self.low[0]]
+            self.high = [int(high_coord[1]), int(high_coord[0])] # [self.high[1], self.high[0]]
         else:
             self.low =  [int(low_coord[0]),  int(low_coord[1])]
             self.high = [int(high_coord[0]), int(high_coord[1])]
@@ -138,16 +158,6 @@ class MeshModel:
             grid_element, axislavels_element, seq_rule_element, order_element, \
             data_block_element, tupples
 
-        print(f'path:        {self.path}')
-        print(f'name:        {self.name}')
-        print(f'description: {self.description}')
-        print(f'mesh no:     {self.mesh_no}')
-        print(f'mesh type:   {self.mesh_type}')
-        print(f'mesh range:  [{self.lower[0]}, {self.lower[1]}] - [{self.upper[0]}, {self.upper[1]}]')
-        print(f'mesh position range: [{self.low[0]}, {self.low[1]}] - [{self.high[0]}, {self.high[1]}] sequence: {self.seq_rule}')
-        print(f'mesh order:          [{self.order[0]}, {self.order[1]}]')
-        print(f'mesh length: z:{len(z)} type:{len(t)} uom:{self.uom}')
-
         # メタ情報から緯度経度リストを生成し
         # インスタンス変数へ格納
         (self.x, self.y, self.z, self.t) = self.get_xyzt(z, t)
@@ -162,13 +172,14 @@ class MeshModel:
         """
         print(f'path:        {self.path}')
         print(f'name:        {self.name}')
+        print(f'srs name:    {self.srs_name}')
         print(f'description: {self.description}')
         print(f'mesh no:     {self.mesh_no}')
         print(f'mesh type:   {self.mesh_type}')
         print(f'mesh range:  [{self.lower[0]}, {self.lower[1]}] - [{self.upper[0]}, {self.upper[1]}]')
         print(f'mesh position range: [{self.low[0]}, {self.low[1]}] - [{self.high[0]}, {self.high[1]}] sequence: {self.seq_rule}')
         print(f'mesh order:          [{self.order[0]}, {self.order[1]}]')
-        print(f'mesh length: x:{len(self.x)}, y:{len(self.y)}, z:{len(self.z)} type:{len(self.t)} uom:{self.uom}')
+        print(f'mesh length: x:{len(self.x)}, y:{len(self.y)}, z:{len(self.z)} type:{len(self.t)} uom:{self.uom} (omitted no data: {self.omit_no_data})')
 
     def get_histgram(self, path:str=None):
         """
@@ -225,12 +236,9 @@ class MeshModel:
         ax.set_title(self.path, size=10)
  
         # 軸ラベルのサイズと色を設定
-        ax.set_xlabel('latitude(degree)',size=10,color='black')
-        ax.set_ylabel('longitude(degree)',size=10,color='black')
+        ax.set_xlabel('longitude(degree)',size=10,color='black')
+        ax.set_ylabel('latitude(degree)',size=10,color='black')
         ax.set_zlabel('height(m)', size=10, color='black')
-
-        # リストx:緯度、リストy:経度、リストz:ジオイド高 に変換
-        #(x, y, z) = self.convert_xyz()
 
         # 散布図を描画
         ax.scatter(self.x, self.y, self.z, s=1, c='red')
@@ -258,24 +266,25 @@ class MeshModel:
         with open(path, 'w', newline='') as f:
             writer = csv.writer(f, delimiter=',')
             for i in range(len(self.z)):
-                writer.writerow([self.x[i], self.y[i], self.z[i], self.t[i]])
+                # 緯度、経度、標高、種類の順
+                writer.writerow([self.y[i], self.x[i], self.z[i], self.t[i]])
         if self.debug:
             print(f'saved csv to {path}')
 
-    def save_geojson(self, path:str, crs:str='EPSG:4326') -> None:
+    def save_geojson(self, path:str, crs:str=DEFAULT_CRS) -> None:
         """
         指定された測地系でGeoJSON形式として保存する。
 
         Parameters
         ----
         crs:str
-            測地系。デフォルトは世界測地系(EPSG:4326)
+            測地系。デフォルトは世界測地系(EPSG:6668)
         """
         self.get_gpd(crs=crs).to_file(driver='GeoJSON', filename=path)
         if self.debug:
             print(f'saved geojson to {path}')
 
-    def save_geoshp(self, path:str='geoid.shp', crs:str='EPSG:4326'):
+    def save_geoshp(self, path:str='geoid.shp', crs:str=DEFAULT_CRS):
         """
         指定された測地系でShp形式で保存する。
 
@@ -284,13 +293,13 @@ class MeshModel:
         path:str
             GIS Shape形式ファイルパス
         crs:str
-            座標系（デフォルト: 'EPSG:4326'）
+            座標系（デフォルト: 'EPSG:6668'）
         """
         self.get_gpd(crs=crs).to_file(driver='ESRI Shapefile', filename=path)
         if self.debug:
             print(f'saved shp to {path}')
 
-    def get_gpd(self, crs:str='EPSG:4326') -> gpd.GeoDataFrame:
+    def get_gpd(self, crs:str=DEFAULT_CRS) -> gpd.GeoDataFrame:
         """
         DEMデータをGeoDataFrame オブジェクトとして取得する。
         データなし(-9999.0)である座標は削除済みオブジェクトとなる。
@@ -298,7 +307,7 @@ class MeshModel:
         Parameters
         ----
         crs:str
-            座標系（デフォルト EPSG:4326）
+            座標系（デフォルト EPSG:6668）
         
         Returns
         ----
@@ -310,7 +319,7 @@ class MeshModel:
         total = len(self.x)
         for i in range(total):
             # Point(経度, 緯度)
-            geometry.append(Point(self.y[i], self.x[i]))
+            geometry.append(Point(self.x[i], self.y[i]))
         return gpd.GeoDataFrame({'height':self.z, 'type':self.t, 'geometry':geometry}, crs=crs)
 
     def get_xyzt(self, z:list, t:list) -> tuple[list, list, list, list]:
@@ -343,7 +352,7 @@ class MeshModel:
         if self.debug:
             print(f'y start_pos:{start_y_position}, end_pos:{end_y_position}')
             print(f'y start:{start_y}, end:{end_y}, delta:{delta_y}, total:{total_y}')
-        print(f'z:{len(z)}, t:{len(t)}')
+            print(f'z:{len(z)}, t:{len(t)}')
         index_z = 0
         _x, _y, _z, _t = [], [], [], []
         for index_y in range(start_y, end_y, delta_y):
@@ -351,11 +360,17 @@ class MeshModel:
             for index_x in range(start_x, end_x, delta_x):
                 pos_x = self._get_position(index_x, total_x, start_x_position, end_x_position)
                 pos_z = z[index_z]
-                _x.append(pos_x)
-                _y.append(pos_y)
-                _z.append(pos_z)
-                _t.append(t[index_z])
-                index_z = index_z + 1
+                
+                # NO_DATAの場合リストに入れない or NO_DATAではない
+                if not self.omit_no_data or pos_z > self.NO_DATA:
+                    _x.append(pos_x) # 経度
+                    _y.append(pos_y) # 緯度
+                    _z.append(pos_z) # 標高
+                    _t.append(t[index_z]) # 種類（日本語）
+                elif self.debug:
+                    print(f'omitted (x, y, z, t) = ({pos_x}, {pos_y}, {pos_z}, {t[index_z]})')
+
+                index_z += 1
                 # XMLファイルによってはメタ情報記載のデータ数より前に終了するものがある
                 # ex) FG-GML-5339-15-04-DEM5A-20161001.xml
                 # このため早めにデータが無くなる場合はbreakして止めている
@@ -372,6 +387,7 @@ class MeshModel:
         if self.debug:
             print(f'len longitude:{len(_x)} latitude:{len(_y)} height:{len(_z)} type:{len(_t)}')
         return (_x, _y, _z, _t)
+
 
     def _get_range(self, order:int, low:int, high:int) -> tuple[int, int, int, int]:
         """
@@ -433,7 +449,7 @@ class Converter:
     CSV/GeoJSON/Shapeに変換するユーティリティクラス。
     """
 
-    def __init__(self, data_dir:str='', debug:bool=False) -> None:
+    def __init__(self, data_dir:str='', omit_no_data:bool=True, debug:bool=False) -> None:
         """
         指定されたディレクトリに格納された拡張子(.xml)のファイルパスを
         変換対象とする。
@@ -442,6 +458,8 @@ class Converter:
         ----
         data_dir:str=''
             対象とするXMLファイル群が格納されているディレクトリ
+        omit_no_data:bool=True
+            NO_DATAを無視するかどうか
         debug:bool=False
             デバッグオプション
 
@@ -452,6 +470,7 @@ class Converter:
         """
         self.debug = debug
         self.data_dir = data_dir
+        self.omit_no_data = omit_no_data
         if not os.path.isdir(self.data_dir):
             raise ValueError(f'{self.data_dir} is not a directory')
 
@@ -470,9 +489,8 @@ class Converter:
         """
         os.makedirs(output_dir, exist_ok=True)
         for path in self.paths:
-            csv_path = os.path.join(
-                output_dir, os.path.splitext(os.path.basename(path))[0] + '.csv')
-            mesh = MeshModel(path, self.debug)
+            csv_path = f'{os.path.join(output_dir, os.path.splitext(os.path.basename(path))[0])}.csv'
+            mesh = MeshModel(path=path, omit_no_data=self.omit_no_data, debug=self.debug)
             mesh.save_csv(csv_path)
             del mesh
             gc.collect()
@@ -488,9 +506,8 @@ class Converter:
         """
         os.makedirs(output_dir, exist_ok=True)
         for path in self.paths:
-            json_path = os.path.join(
-                output_dir, os.path.splitext(os.path.basename(path))[0] + '.json')
-            mesh = MeshModel(path, self.debug)
+            json_path = f'{os.path.join(output_dir, os.path.splitext(os.path.basename(path))[0])}.json'
+            mesh = MeshModel(path=path, omit_no_data=self.omit_no_data, debug=self.debug)
             mesh.save_geojson(json_path)
             del mesh
             gc.collect()
@@ -506,9 +523,8 @@ class Converter:
         """
         os.makedirs(output_dir, exist_ok=True)
         for path in self.paths:
-            shp_path = os.path.join(
-                output_dir, os.path.splitext(os.path.basename(path))[0] + '.shp')
-            mesh = MeshModel(path, self.debug)
+            shp_path = f'{os.path.join(output_dir, os.path.splitext(os.path.basename(path))[0])}.shp'
+            mesh = MeshModel(path=path, omit_no_data=self.omit_no_data, debug=self.debug)
             mesh.save_geoshp(shp_path)
             del mesh
             gc.collect()
@@ -525,9 +541,9 @@ class Converter:
         os.makedirs(output_dir, exist_ok=True)
         for path in self.paths:
             prefix = os.path.splitext(os.path.basename(path))[0]
-            mesh = MeshModel(path, self.debug)
-            mesh.get_histgram(os.path.join(output_dir, prefix + '_hist.png'))
-            mesh.get_scatter3d(os.path.join(output_dir, prefix + '_3d.png'))
+            mesh = MeshModel(path=path, omit_no_data=self.omit_no_data, debug=self.debug)
+            mesh.get_histgram(f'{os.path.join(output_dir, prefix)}_hist.png')
+            mesh.get_scatter3d(f'{os.path.join(output_dir, prefix)}_3d.png')
             del mesh
             gc.collect()
 
@@ -546,12 +562,12 @@ class Converter:
             if self.debug:
                 print(f'** {path} **')
             prefix = os.path.splitext(os.path.basename(path))[0]
-            mesh = MeshModel(path, self.debug)
-            mesh.get_histgram(os.path.join(output_dir, prefix + '_hist.png'))
-            mesh.get_scatter3d(os.path.join(output_dir, prefix + '_3d.png'))
-            mesh.save_csv(os.path.join(output_dir, prefix + '.csv'))
-            mesh.save_geojson(os.path.join(output_dir, prefix + '.json'))
-            mesh.save_geoshp(os.path.join(output_dir, prefix + '.shp'))
+            mesh = MeshModel(path=path, omit_no_data=self.omit_no_data, debug=self.debug)
+            mesh.get_histgram(f'{os.path.join(output_dir, prefix)}_hist.png')
+            mesh.get_scatter3d(f'{os.path.join(output_dir, prefix)}_3d.png')
+            mesh.save_csv(f'{os.path.join(output_dir, prefix)}.csv')
+            mesh.save_geojson(f'{os.path.join(output_dir, prefix)}.json')
+            mesh.save_geoshp(f'{os.path.join(output_dir, prefix)}.shp')
             del mesh
             gc.collect()
 
@@ -566,15 +582,22 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='convert Japan DEM XML files to GeoJSON/Shape files.')
     parser.add_argument('--datadir', type=str, default=DATA_ROOT_DIR, help='DEM data directory path')
     parser.add_argument('--outdir', type=str, default='output', help='output directory path')
-    parser.add_argument('--debug', action='store_false', help='print debug lines')
+    parser.add_argument('--omit_no_data', action='store_true', help='omit no data records')
+    parser.add_argument('--debug', action='store_true', help='print debug lines')
     args = parser.parse_args()
 
+    import time
+    elapsed = time.process_time()
     datadirs = glob.glob(args.datadir + '/**/', recursive=True)
     for datadir in datadirs:
         files = glob.glob(datadir + '*.xml')
         if(len(files)> 0):
-            conv = Converter(datadir, args.debug)
-            conv.to_all(output_dir='output')
+            #if args.debug:
+            #    print(f'Converter args: datadir={datadir}, outdir={args.outdir}, omit_no_data={args.omit_no_data}, debug={args.debug}')
+            conv = Converter(data_dir=datadir, omit_no_data=args.omit_no_data, debug=args.debug)
+            conv.to_all(output_dir=args.outdir)
         else:
             if args.debug:
                 print(f'skip {datadir}')
+    elapsed -= time.process_time()
+    print(f'elapsed time: {abs(elapsed)} sec')
