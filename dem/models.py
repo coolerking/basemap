@@ -28,6 +28,7 @@ class MeshModel:
     データなし時の数値
     """
     NO_DATA = -9999.0
+    TYPE_NO_DATA = 'no data point'
 
     def __init__(self, path:str=None, omit_no_data:bool=True, debug:bool=False) -> None:
         """
@@ -42,18 +43,21 @@ class MeshModel:
         debug:bool=False
             デバッグフラグ（メタ情報表示）
         """
+        # パス
+        self.path = path
+
         # デバッグフラグ
         self.debug = debug
 
         # NO_DATAを削除するか
         self.omit_no_data = omit_no_data
 
-        #if self.debug:
-        print(f'init path={path}, omit_no_data={self.omit_no_data}, debug:{self.debug}')
+        if self.debug:
+            print(f'init path={self.path}, omit_no_data={self.omit_no_data}, debug:{self.debug}')
 
         # GMLファイルを読み込みメタ情報及びデータを
         # インスタンス変数へ格納
-        self.load(path)
+        self.load(self.path)
 
         # メタ情報表示
         if self.debug:
@@ -69,9 +73,6 @@ class MeshModel:
         ----
         path:str        読み込み対象ファイルパス
         """
-        # XMLファイルパス
-        self.path = path
-
         # XMLスキーママッピング
         prefix_map = {
            'gml': 'http://www.opengis.net/gml/3.2',
@@ -109,15 +110,18 @@ class MeshModel:
         low_coord = grid_element.find('.//gml:low', prefix_map).text.split()
         high_coord = grid_element.find('.//gml:high', prefix_map).text.split()
         axislavels_element = grid_element.find('.//gml:axisLabels', prefix_map).text.split()
+        start_point_element = root_element.find('.//gml:startPoint', prefix_map).text.split()
 
         # データ始点位置、データ終点位置
         if axislavels_element[0] == 'y':
             # 先頭ラベルが 'y' なら座標位置を置換
-            self.low =  [int(low_coord[1]),  int(low_coord[0])] # [self.low[1],  self.low[0]]
-            self.high = [int(high_coord[1]), int(high_coord[0])] # [self.high[1], self.high[0]]
+            self.low =  [int(low_coord[1]),  int(low_coord[0])]
+            self.high = [int(high_coord[1]), int(high_coord[0])]
+            self.start_point = [int(start_point_element[0]), int(start_point_element[1])]
         else:
             self.low =  [int(low_coord[0]),  int(low_coord[1])]
             self.high = [int(high_coord[0]), int(high_coord[1])]
+            self.start_point = [int(start_point_element[1]), int(start_point_element[0])]
 
         seq_rule_element = root_element.find('.//gml:sequenceRule', prefix_map)
         order_element = seq_rule_element.get('order')
@@ -127,16 +131,16 @@ class MeshModel:
 
         # メッシュデータの方向
         if '-x' in order_element and '-y' in order_element:
-            # X(緯度、横軸)方向負、Y(経度、縦軸)方向負
+            # X(横軸)方向負、Y(縦軸)方向負
             self.order = [-1, -1]
         elif '-x' in order_element and '+y' in order_element:
-            # X(緯度、横軸)方向負、Y(経度、縦軸)方向正
+            # X(横軸)方向負、Y(縦軸)方向正
             self.order = [-1, 1]
         elif '+x' in order_element and '-y' in order_element:
-            # X(緯度、横軸)方向正、Y(経度、縦軸)方向負
+            # X(横軸)方向正、Y(縦軸)方向負
             self.order = [1, -1]
         else:
-            # X(緯度、横軸)方向正、Y(経度、縦軸)方向正
+            # X(横軸)方向正、Y(縦軸)方向正
             self.order = [1, 1]
 
         data_block_element = root_element.find('.//gml:DataBlock', prefix_map)
@@ -156,7 +160,7 @@ class MeshModel:
 
         del root_element, lower_element, upper_element, \
             grid_element, axislavels_element, seq_rule_element, order_element, \
-            data_block_element, tupples
+            start_point_element, data_block_element, tupples
 
         # メタ情報から緯度経度リストを生成し
         # インスタンス変数へ格納
@@ -178,6 +182,7 @@ class MeshModel:
         print(f'mesh type:   {self.mesh_type}')
         print(f'mesh range:  [{self.lower[0]}, {self.lower[1]}] - [{self.upper[0]}, {self.upper[1]}]')
         print(f'mesh position range: [{self.low[0]}, {self.low[1]}] - [{self.high[0]}, {self.high[1]}] sequence: {self.seq_rule}')
+        print(f'mesh start position: [{self.start_point[0]}, {self.start_point[1]}]')
         print(f'mesh order:          [{self.order[0]}, {self.order[1]}]')
         print(f'mesh length: x:{len(self.x)}, y:{len(self.y)}, z:{len(self.z)} type:{len(self.t)} uom:{self.uom} (omitted no data: {self.omit_no_data})')
 
@@ -282,7 +287,7 @@ class MeshModel:
         """
         self.get_gpd(crs=crs).to_file(driver='GeoJSON', filename=path)
         if self.debug:
-            print(f'saved geojson to {path}')
+            print(f'saved geojson to {path}/{crs}')
 
     def save_geoshp(self, path:str='geoid.shp', crs:str=DEFAULT_CRS):
         """
@@ -297,12 +302,12 @@ class MeshModel:
         """
         self.get_gpd(crs=crs).to_file(driver='ESRI Shapefile', filename=path)
         if self.debug:
-            print(f'saved shp to {path}')
+            print(f'saved shp to {path}/{crs}')
 
     def get_gpd(self, crs:str=DEFAULT_CRS) -> gpd.GeoDataFrame:
         """
         DEMデータをGeoDataFrame オブジェクトとして取得する。
-        データなし(-9999.0)である座標は削除済みオブジェクトとなる。
+        geometry:座標(経度、緯度）、height:標高、type:種類
 
         Parameters
         ----
@@ -326,10 +331,11 @@ class MeshModel:
         """
         インスタンス変数に格納されているメタ情報をもとに
         計測データなしを除外した経度(X)リスト、緯度(Y)リスト、標高リスト、DEM種別リストを生成する。
+
         Parameters
         ----
         z:list
-            標高リスト(NO_DATA含む)
+            標高リスト
         t:list
             DEM種別リスト
 
@@ -341,24 +347,45 @@ class MeshModel:
             標高リスト（単位：ｍ）
             DEM種別リスト（文字列）
         """
+        # 先頭データなし領域にNO_DATAを追加
+        if self.debug:
+            print(f'len z:{len(z)}, t:{len(t)}')
+        # 開始位置までNO_DATAで埋める
+        no_data_size = self.start_point[0] * (abs(self.high[0] - self.low[0]) + 1) + self.start_point[1]
+        for _ in range(no_data_size):
+            z.insert(0, self.NO_DATA)
+            t.insert(0, self.TYPE_NO_DATA)
+        if no_data_size > 0 and self.debug:
+            print(f'inserted {no_data_size} no_data')
+        if self.debug:
+            print(f'len z:{len(z)}, t:{len(t)}')
+
+        # X方向（横軸）
         start_x_position, end_x_position = self.lower[0], self.upper[0]
         start_x, end_x, delta_x, total_x = self._get_range(self.order[0], self.low[0], self.high[0])
         if self.debug:
             print(f'x start_pos:{start_x_position}, end_pos:{end_x_position}')
             print(f'x start:{start_x}, end:{end_x}, delta:{delta_x}, total:{total_x}')
-
+        # Y方向（縦軸）
         start_y_position, end_y_position = self.lower[1], self.upper[1]
         start_y, end_y, delta_y, total_y = self._get_range(self.order[1], self.low[1], self.high[1])
         if self.debug:
             print(f'y start_pos:{start_y_position}, end_pos:{end_y_position}')
             print(f'y start:{start_y}, end:{end_y}, delta:{delta_y}, total:{total_y}')
-            print(f'z:{len(z)}, t:{len(t)}')
+
+        # 標高点数カウンタ
         index_z = 0
+        # 経度、緯度、標高、種類
         _x, _y, _z, _t = [], [], [], []
+        # Y軸ループ
         for index_y in range(start_y, end_y, delta_y):
+            # Y軸座標値
             pos_y = self._get_position(index_y, total_y, start_y_position, end_y_position)
+            # X軸ループ
             for index_x in range(start_x, end_x, delta_x):
+                # X軸座標値
                 pos_x = self._get_position(index_x, total_x, start_x_position, end_x_position)
+                # Z軸座標値
                 pos_z = z[index_z]
                 
                 # NO_DATAの場合リストに入れない or NO_DATAではない
