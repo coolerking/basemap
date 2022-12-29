@@ -133,3 +133,4 @@ output
 *.ipynb
 test.*
 FG-GML*
+*.pptx
